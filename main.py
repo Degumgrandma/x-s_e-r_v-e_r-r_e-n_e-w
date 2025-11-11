@@ -52,9 +52,11 @@ IMAP_PASSWORD = os.getenv("IMAP_PASSWORD")
 
 # --- 新增：邮件过滤配置 ---
 # XServer 发送验证码的 *发件人* 地址 (请确认是否准确)
-XSERVER_SENDER = os.getenv("XSERVER_SENDER", "info@xserver.ne.jp")
+#XSERVER_SENDER = os.getenv("XSERVER_SENDER", "info@xserver.ne.jp")
+XSERVER_SENDER = os.getenv("XSERVER_SENDER", "support@xserver.ne.jp")
 # XServer 验证码邮件的 *主题* (请确认是否准确)
-XSERVER_SUBJECT = os.getenv("XSERVER_SUBJECT", "【Xserver】認証コードのお知らせ")
+#XSERVER_SUBJECT = os.getenv("XSERVER_SUBJECT", "【Xserver】認証コードのお知らせ")
+XSERVER_SUBJECT = os.getenv("XSERVER_SUBJECT", "【XServerアカウント】ログイン用認証コードのお知らせ")
 # -----------------------------------------------------------------
 
 
