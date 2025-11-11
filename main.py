@@ -409,100 +409,84 @@ class XServerAutoLogin:
 
     # --- (新增/已修复) IMAP 验证码获取函数 ---
     async def get_verification_code_from_imap(self):
-        """
-        (新函数) 通过 IMAP 登录 serv00.com 邮箱并获取验证码
-        """
         try:
             print("📧 开始从 IMAP 获取验证码...")
-            print("⏰ 等待验证码邮件发送（15秒）...")
             await asyncio.sleep(15)
-
+    
             print(f"🚀 正在连接 IMAP 服务器: {self.imap_server}:{self.imap_port}")
             mail = imaplib.IMAP4_SSL(self.imap_server, self.imap_port)
-            
+    
             print(f"🔑 正在登录邮箱: {self.imap_user}")
             mail.login(self.imap_user, self.imap_password)
-            
+    
             mail.select("inbox")
             print("📬 已进入收件箱")
-
-            # 构建搜索条件 - 修复 UnicodeEncodeError 的关键
-            # IMAP 搜索对于非 ASCII 字符必须将条件作为单独的参数传递
-            search_args = ('FROM', self.xserver_sender, 'SUBJECT', self.xserver_subject)
-            print(f"🔍 正在搜索邮件 (条件: {' '.join(search_args)})")
-
-            # 使用 UTF-8 编码进行搜索，将搜索条件作为单独的参数传递
-            # *search_args 将元组解包为单独的字符串参数，避免了 imaplib 内部的 ASCII 编码错误
-            #status, messages = mail.search("UTF-8", *search_args) 此代码不行
-
-            # 搜索邮件（避免 UTF-8 错误）
-            status, messages = mail.search(None, 'FROM', f'"{self.xserver_sender}"', 'SUBJECT', f'"{self.xserver_subject}"')
-            
+    
+            # 只用 FROM 搜索，避免日文编码错误
+            status, messages = mail.search(None, 'FROM', f'"{self.xserver_sender}"')
             if status != "OK":
                 print("❌ 搜索邮件失败")
                 mail.logout()
                 return None
-
+    
             mail_ids = messages[0].split()
             if not mail_ids:
-                print(f"❌ 未找到来自 {self.xserver_sender} 且主题为 '{self.xserver_subject}' 的邮件")
+                print(f"❌ 未找到来自 {self.xserver_sender} 的邮件")
                 mail.logout()
                 return None
-            
-            print(f"✅ 找到 {len(mail_ids)} 封匹配邮件")
-            # 获取最新的一封邮件
-            latest_id = mail_ids[-1]
-            print(f"📥 正在获取最新一封邮件 (ID: {latest_id.decode()})")
-
-            status, data = mail.fetch(latest_id, "(RFC822)")
-            if status != "OK":
-                print("❌ 获取邮件内容失败")
-                mail.logout()
-                return None
-
-            # 解析邮件内容
-            msg = email.message_from_bytes(data[0][1])
-            mail_content = ""
-
-            if msg.is_multipart():
-                for part in msg.walk():
-                    ctype = part.get_content_type()
-                    cdispo = str(part.get('Content-Disposition'))
-
-                    if ctype == 'text/plain' and 'attachment' not in cdispo:
-                        charset = part.get_content_charset()
-                        if charset:
-                            mail_content = part.get_payload(decode=True).decode(charset, errors="ignore")
-                        else:
-                            mail_content = part.get_payload(decode=True).decode(errors="ignore")
-                        break
-            else:
-                charset = msg.get_content_charset()
-                if charset:
-                    mail_content = msg.get_payload(decode=True).decode(charset, errors="ignore")
+    
+            print(f"✅ 找到 {len(mail_ids)} 封邮件，开始匹配主题...")
+    
+            # 从最新开始遍历
+            for mail_id in reversed(mail_ids):
+                status, data = mail.fetch(mail_id, "(RFC822)")
+                if status != "OK":
+                    continue
+    
+                msg = email.message_from_bytes(data[0][1])
+                subject = msg.get("Subject", "")
+                decoded_subject, encoding = decode_header(subject)[0]
+                if isinstance(decoded_subject, bytes):
+                    subject = decoded_subject.decode(encoding or "utf-8", errors="ignore")
+    
+                if subject.strip() != self.xserver_subject.strip():
+                    continue  # 跳过不匹配的邮件
+    
+                print(f"📧 匹配成功的邮件主题: {subject}")
+    
+                # 提取正文
+                mail_content = ""
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        if part.get_content_type() == "text/plain" and "attachment" not in str(part.get("Content-Disposition")):
+                            charset = part.get_content_charset()
+                            mail_content = part.get_payload(decode=True).decode(charset or "utf-8", errors="ignore")
+                            break
                 else:
-                    mail_content = msg.get_payload(decode=True).decode(errors="ignore")
-
+                    charset = msg.get_content_charset()
+                    mail_content = msg.get_payload(decode=True).decode(charset or "utf-8", errors="ignore")
+    
+                mail.logout()
+                print("🔒 已登出 IMAP 服务器")
+    
+                if not mail_content:
+                    print("❌ 邮件内容为空或无法解析")
+                    return None
+    
+                verification_code = self._extract_verification_code(mail_content)
+                if verification_code:
+                    print(f"🎉 成功提取验证码: {verification_code}")
+                    return verification_code
+                else:
+                    print("❌ 未能在邮件正文中找到验证码")
+                    return None
+    
+            print("❌ 所有邮件中都未找到匹配主题")
             mail.logout()
-            print("🔒 已登出 IMAP 服务器")
-
-            if not mail_content:
-                print("❌ 邮件内容为空或无法解析 (可能是HTML邮件？)")
-                return None
-            
-            # 使用原脚本的提取函数来解析邮件内容
-            verification_code = self._extract_verification_code(mail_content)
-            
-            if verification_code:
-                print(f"🎉 成功提取验证码: {verification_code}")
-                return verification_code
-            else:
-                print("❌ 未能在邮件正文中找到验证码")
-                return None
-
+            return None
+    
         except imaplib.IMAP4.error as e:
             print(f"❌ IMAP 登录失败: {e}")
-            print("   请检查 IMAP_USER 和 IMAP_PASSWORD 是否正确")
             return None
         except Exception as e:
             print(f"❌ 从 IMAP 获取验证码失败: {e}")
